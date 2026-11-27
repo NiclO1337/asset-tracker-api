@@ -472,7 +472,7 @@ frameworks, tools and versions (CLAUDE.md, "Security"). The result goes here.
 | X2 | API2 Broken authentication: missing checks, guessable or leaked keys, keys in URLs, timing leaks | Every endpoint | Authentication handler + **fallback policy** (deny by default). Keys: 32 random bytes as 64 hex characters, one per client, compared with `CryptographicOperations.FixedTimeEquals`. Header only, never a query string. HTTPS only. Same 401 for missing and wrong key. Failed attempts rate-limited per client IP (X4). Test that every mapped endpoint requires auth | OWASP API2, REST cheat sheet | 10 |
 | X3 | API3 Broken object property level authorization (mass assignment, excessive data exposure) | `POST`/`PUT` bodies, all responses | Requests bind to request records with only client-settable fields; `UnmappedMemberHandling.Disallow` rejects anything else (e.g. `currency`, `id`). Responses are explicit records, never entities | OWASP API3 | 9, 12 |
 | X4 | API4 Unrestricted resource consumption (huge pages, huge bodies, request floods) | Lists, reports, all endpoints | `pageSize` ≤ 100, `count` ≤ 50, request body limit 64 KB, built-in rate limiter (fixed window of 1 minute: 60 requests per client key when authenticated, 10 per client IP otherwise; 429 + `Retry-After`). Container App max replicas = 1, so the in-memory limiter sees every request | OWASP API4, ASP.NET Core rate limiting | 9, 15 |
-| X5 | API8 Security misconfiguration (debug pages, docs, HTTP, server banners) | `Program.cs`, Azure settings | `ASPNETCORE_ENVIRONMENT=Production` in Azure: no developer exception page, OpenAPI only in Development, HSTS. Ingress `allowInsecure=false`. Kestrel `AddServerHeader = false`. No CORS. Non-root `app` user (default in .NET container images) | OWASP API8 | 15, 16 |
+| X5 | API8 Security misconfiguration (debug pages, docs, HTTP, server banners) | `Program.cs`, Azure settings | `ASPNETCORE_ENVIRONMENT=Production` in Azure: no developer exception page, OpenAPI only in Development, HSTS. Ingress `allowInsecure=false`. Kestrel `AddServerHeader = false`. Host filtering: `AllowedHosts` is `*` from the template; in Production set it to our host names only (custom domain + the `*.azurecontainerapps.io` FQDN), via a Container Apps environment variable, after checking that Container Apps health probes still pass. No CORS. Non-root `app` user (default in .NET container images) | OWASP API8 | 15, 16 |
 | X6 | Injection | Search parameters | EF Core LINQ only (parameterised). No `FromSqlRaw`; no string-built SQL | OWASP REST | 8 |
 | X7 | Secrets in a public repo or public image | Repo, image, workflow, `.http` file | No secrets in `appsettings*.json`; API key as a Container Apps secret; DB has no password (managed identity); `.http` secrets in the git-ignored `http-client.env.json.user`; GitHub → Azure via OIDC (no stored Azure secret). The image is public, so nothing secret is ever baked in | CLAUDE.md rules | 2, 10, 18 |
 | X8 | Error responses leak internals | Every failure | One `IExceptionHandler` mapping to ProblemDetails; 500s return only a trace id; infrastructure exception messages never reach the client | OWASP REST | 9 |
@@ -624,8 +624,9 @@ dotnet user-secrets init --project src/AssetTracker.Api
   - `EnableRetryOnFailure` doesn't work with user-started transactions without
     an execution strategy; we don't use explicit transactions.
   - `WebApplicationFactory<Program>` needs `Program` to be visible to the test
-    project; check how .NET 10 handles top-level `Program` before adding
-    `public partial class Program`.
+    project. Checked in step 3: in .NET 10 the Web SDK's source generator adds
+    `public partial class Program` for top-level `Program.cs`, so we don't
+    declare it ourselves.
   - Attributes can't take `decimal` constants, so the price range is enforced
     by the domain (R8), not by `[Range]` with `Asset.MaxPurchasePrice`.
   - Pick the Azure region before creating the free SQL database: the region of
@@ -704,7 +705,7 @@ dotnet user-secrets init --project src/AssetTracker.Api
 
 | # | Step | Covers | Check before committing | Suggested commit |
 |---|------|--------|-------------------------|------------------|
-| 15 | Forwarded headers, rate limiting, production pipeline settings (HSTS, no OpenAPI, no developer page) | M11, X4, X5, X11 | Tests: 429 + `Retry-After`; Production-mode test | `add rate limiting and production settings` |
+| 15 | Forwarded headers, rate limiting, production pipeline settings (HSTS, no OpenAPI, no developer page, `AllowedHosts` limited to our host names, see X5) | M11, X4, X5, X11 | Tests: 429 + `Retry-After`; Production-mode test | `add rate limiting and production settings` |
 | 16 | Container settings in `AssetTracker.Api.csproj` (repository, base image tag `10.0`, port) | X5, X10 | Niclas: `dotnet publish /t:PublishContainer` locally builds an image that starts | `add container settings` |
 | 17 | Azure setup by Niclas following §12 (resource group, SQL, Container Apps, identity, secrets, DB user, migration script) | X9, X14 | Smoke test against the `*.azurecontainerapps.io` URL | — |
 | 18 | `deploy.yml`: on `main` after tests, push image to `ghcr.io` (`GITHUB_TOKEN`), sign in to Azure with OIDC, deploy a new revision | M12, X7, X12 | A push to `main` deploys; the new revision answers | `add deploy workflow` |
