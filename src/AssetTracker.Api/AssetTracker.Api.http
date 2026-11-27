@@ -1,0 +1,4 @@
+# Manual requests for the Asset Tracker API (see CLAUDE.md, "Manual API testing").
+# One block per endpoint and error case is added as the endpoints are built.
+
+@HostAddress = https://localhost:7194
