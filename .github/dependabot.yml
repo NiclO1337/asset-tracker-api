@@ -1,0 +1,18 @@
+version: 2
+
+# Keeps the SHA-pinned actions in .github/workflows/ up to date (X12).
+# NuGet is left out on purpose: package versions are pinned in docs/PROJECT_CONTEXT.md §10,
+# and CI's vulnerable-package check catches security problems there.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    # Only suggest a release once it has been out for a week.
+    cooldown:
+      default-days: 7
+    # All action updates in one pull request.
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -314,9 +314,11 @@ asset-tracker-api/
 ├── TESTING.md
 ├── asset-tracker-api.slnx
 ├── Directory.Build.props                  # copied from Week 46
-├── .github/workflows/
-│   ├── ci.yml                             # build, test, format, vulnerable packages on every push and PR
-│   └── deploy.yml                         # main only: image to ghcr.io, new revision
+├── .github/
+│   ├── dependabot.yml                     # monthly, grouped updates of the pinned actions
+│   └── workflows/
+│       ├── ci.yml                             # build, test, format, vulnerable packages on every push and PR
+│       └── deploy.yml                     # main only: image to ghcr.io, new revision
 ├── docs/
 │   └── PROJECT_CONTEXT.md                 # this file
 ├── src/
@@ -479,7 +481,7 @@ frameworks, tools and versions (CLAUDE.md, "Security"). The result goes here.
 | X9 | Database reachable from the internet | Azure SQL logical server | Entra-only authentication (SQL logins can't connect at all), managed identity with `db_datareader` + `db_datawriter` only, `Encrypt=True`. "Allow Azure services" must be on because Container Apps (consumption) has no fixed outbound IP, which lets any Azure IP reach the port. **Accepted** (below) | Azure SQL network access, Entra-only auth | 17 |
 | X10 | Known-vulnerable framework and packages | Runtime, EF Core, SqlClient | Runtime/SDK 10.0.15+ (Nov 2026 CVEs). EF Core 10.0.15 + direct reference `Microsoft.Data.SqlClient` 6.1.8 (CVE-2026-62903 below 6.1.7; CVE-2026-84008 dependency fix in 6.1.8). NuGet audit runs on restore and its warnings fail the build (`TreatWarningsAsErrors`); `dotnet list package --vulnerable --include-transitive` in CI. Container base image tag `10.0` so every build gets the latest patch | .NET Nov 2026 servicing, MSRC, SqlClient release | 2, 4 |
 | X11 | Spoofed client IP defeats per-IP limits | Rate limiter (X4) | Forwarded Headers middleware first in the pipeline, `X-Forwarded-For` + `X-Forwarded-Proto`, `ForwardLimit = 1` (only the right-most entry, the one Container Apps sets). Known proxies are cleared because the ingress IPs aren't fixed; the app is only reachable through the ingress | ASP.NET Core proxy docs, Container Apps ingress | 15 |
-| X12 | Over-privileged CI/CD | GitHub Actions | Workflow `permissions:` minimal (`contents: read`; `packages: write` and `id-token: write` only in the deploy job). The Azure identity used by the pipeline has rights on this resource group only. Actions pinned to full commit SHAs with the version in a comment (tags can be moved; commits can't), and `actions/checkout` runs with `persist-credentials: false`. No `pull_request_target` | Least privilege | 4, 18 |
+| X12 | Over-privileged CI/CD | GitHub Actions | Workflow `permissions:` minimal (`contents: read`; `packages: write` and `id-token: write` only in the deploy job). The Azure identity used by the pipeline has rights on this resource group only. Actions pinned to full commit SHAs with the version in a comment (tags can be moved; commits can't), and `actions/checkout` runs with `persist-credentials: false`. No `pull_request_target`. Dependabot keeps the pins current (`github-actions` only, monthly, one grouped PR, 7-day cooldown; Niclas merges by hand). zizmor is run by hand on each new or changed workflow, not in CI | Least privilege | 4, 18 |
 | X13 | Personal data | `AssignedTo` | Only invented names in sample data, tests, `.http` and README. Never logged | CLAUDE.md | 8 |
 | X14 | Surprise bill ("denial of wallet") | Azure | Scale to zero, max replicas 1, logs off, free SQL offer set to **auto-pause until next month** when the free amount is used | Azure SQL free offer | 17 |
 
