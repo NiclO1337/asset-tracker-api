@@ -22,16 +22,30 @@ database. No deadline.
 
 ## Stack
 
-- .NET 10 (LTS), C# 14 (`LangVersion latest`)
+- .NET 10 (LTS), C# 14. `global.json` pins the .NET 10 SDK; my machine also
+  has the .NET 11 SDK, and without the pin `LangVersion latest` would mean
+  C# 15. Never remove or bump `global.json` without asking
 - ASP.NET Core 10 Web API with **controllers** (as scaffolded), built-in DI,
   built-in `ILogger`, `Microsoft.AspNetCore.OpenApi` for the OpenAPI document
 - Entity Framework Core 10 on SQL Server Express, code-first migrations
 - Validation: data annotations on request DTOs + the domain's own guards
 - Tests: xUnit, see "Testing"
 - Formatter: `dotnet format`. Warnings are errors (`Directory.Build.props`)
-- Hosting: deployed publicly on `asset-tracker-api.niclashugdahl.dev`; host and
-  production database: TODO in the context doc. Local development against
-  SQL Server Express
+- Auth: one API key per client, sent in a header (see Security). No users,
+  no ASP.NET Core Identity, no JWT
+- Hosting: **Azure Container Apps** (consumption plan, scales to zero) with a
+  free managed certificate for `asset-tracker-api.niclashugdahl.dev`
+- Production database: **Azure SQL Database** (free offer, serverless). Local
+  development against SQL Server Express. Same EF Core provider in both
+- Container image: GitHub Container Registry (`ghcr.io`), public package (free).
+  Not Azure Container Registry (no free tier)
+- Database login: the Container App's **managed identity** (no database
+  password anywhere)
+- Logs: no log storage (Container Apps logs destination `none`). Live log
+  stream in the portal / `az containerapp logs show --follow` only, so log
+  output must be useful as it happens and is gone afterwards
+- Deploy pipeline: GitHub Actions (tests, image to `ghcr.io`, new revision);
+  details in the context doc
 - Package manager: `dotnet` / NuGet
 
 Several of these may be newer than what you remember. **Check the current
@@ -54,6 +68,7 @@ Run from the repo root.
 | `dotnet ef database update --project src/AssetTracker.Infrastructure --startup-project src/AssetTracker.Api` | Apply migrations to my local database | **Me only** |
 | `dotnet run --project src/AssetTracker.Api` | Starts the API, never exits | **Me only**, see below |
 | `dotnet watch` | Never exits | **Me only** |
+| `az …`, `dotnet publish /t:PublishContainer`, anything that deploys or touches Azure | Deploy, cloud resources | **Me only**. You may write the commands for me to run |
 
 Visual Studio Package Manager Console equivalent:
 `Add-Migration <Name> -Project AssetTracker.Infrastructure -StartupProject AssetTracker.Api`.
@@ -162,15 +177,31 @@ web-facing app: everything here is reachable over HTTP.
   contain only the fields a client may set. Never bind to, or return, an EF
   entity.
 - **Check who is asking.** The API is public on the internet. **Nothing is
-  deployed until every endpoint requires authentication** (the method is
-  decided in the context doc). No anonymous write endpoints, ever. Least
-  privilege by default; Level 5 roles build on the same mechanism later.
+  deployed until every endpoint requires authentication.** The login is an API
+  key in the `X-Api-Key` header:
+  - Implemented as an ASP.NET Core authentication handler, so the normal
+    `[Authorize]` pipeline is used, plus a **fallback authorization policy**
+    that requires an authenticated caller. New endpoints are protected by
+    default; `[AllowAnonymous]` only on a health check, if we add one.
+  - Compare keys with `CryptographicOperations.FixedTimeEquals`, never `==`.
+  - Missing or wrong key → 401 with no hint about which part was wrong.
+  - The key lives in user secrets locally and as a Container Apps secret in
+    Azure. Never in a URL or query string, never logged.
+  - This is deliberately simple. Users, passwords, roles and Identity
+    (`AspNetUsers`) belong to the next project, not this one.
 - **Limit what one request can cost.** Page size has a server-side maximum;
   never return an unbounded list. Rate limiting (ASP.NET Core's built-in
   middleware) is on before the first deploy.
 - **Production is not Development.** The deployed app runs with
   `ASPNETCORE_ENVIRONMENT=Production`: no developer exception page, no
   OpenAPI document unless we decide to publish it, HTTPS only, HSTS on.
+- **Azure.** The app reaches Azure SQL with its system-assigned managed
+  identity (`Authentication=Active Directory Managed Identity` in the
+  connection string): no database password exists to leak. Its database user
+  gets `db_datareader` + `db_datawriter` only; migrations run as my Entra
+  admin account, not as the app. The image is public, so it must never contain
+  secrets (no `appsettings.Production.json` with values, no `.env`). Firewall
+  rules are written into the context doc.
 - **No injection.** LINQ / EF Core only. No `FromSqlRaw` or SQL built from
   strings; if raw SQL is ever needed, use `FromSql` with interpolated
   parameters and tell me first.
@@ -320,21 +351,27 @@ Rules:
 
 ## Packages
 
-Exactly these. Ask before adding anything else.
+Exactly these (the context doc, §10, says what each is for). Ask before adding
+anything else.
 
 | Package | Version | Project |
 |---|---|---|
 | `Microsoft.AspNetCore.OpenApi` | 10.0.15 | Api (from the scaffold) |
-| `Microsoft.EntityFrameworkCore.SqlServer` | 10.0.14 | Infrastructure |
-| `Microsoft.EntityFrameworkCore.Tools` | 10.0.14 | Api (`PrivateAssets=all`) |
-| `System.Security.Cryptography.Pkcs` | 10.0.14 | Infrastructure |
+| `Microsoft.EntityFrameworkCore.SqlServer` | 10.0.15 | Infrastructure |
+| `Microsoft.Data.SqlClient` | 6.1.8 | Infrastructure (pins the patched driver) |
+| `Microsoft.EntityFrameworkCore.Tools` | 10.0.15 | Api (`PrivateAssets=all`) |
 | `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk`, `coverlet.collector` | 2.9.3, 3.1.4, 17.14.1, 6.0.4 | test projects (Milestone versions) |
-| `Microsoft.AspNetCore.Mvc.Testing` | TODO (match the ASP.NET Core patch) | Api.Tests |
+| `Microsoft.AspNetCore.Mvc.Testing` | 10.0.15 | Api.Tests |
 
-EF Core versions match the `EntityFrameworkCore` example and Week 46. The two
-`Microsoft.Extensions.Configuration.*` packages from Week 46 are not needed:
-ASP.NET Core already reads user secrets and environment variables. The security
-research step checks these versions for advisories; ask before bumping any.
+The EF example and Week 46 use 10.0.14; this project uses 10.0.15 and
+SqlClient 6.1.8 because of the November 2026 security fixes (context doc §8,
+X10). The Week 46
+`Microsoft.Extensions.Configuration.*` packages are not needed: ASP.NET Core
+already reads user secrets and environment variables. The explicit
+`System.Security.Cryptography.Pkcs` reference is dropped unless the
+vulnerability check flags it. The .NET 10 SDK must be 10.0.404 or later
+(runtime 10.0.15). `dotnet-ef` is a local tool (`.config/dotnet-tools.json`)
+pinned to 10.0.15: run `dotnet tool restore`, never a global `dotnet-ef`.
 
 ## Persistence
 
@@ -345,14 +382,18 @@ research step checks these versions for advisories; ask before bumping any.
   `Server=localhost\SQLEXPRESS;Database=asset_tracker_api;Integrated Security=true;Encrypt=false;`
   in Development only. Production has no fallback: a missing connection string
   stops the app at startup with a clear log message.
-- The production database (host and provider) is decided in the context doc.
-  Development and production use the **same EF provider**, so one set of
-  migrations works for both.
+- Production is Azure SQL Database with the same `SqlServer` provider, so one
+  set of migrations works for both. The free serverless database pauses when
+  idle and the first query after a pause can fail or be slow: turn on EF
+  Core's connection resiliency (`EnableRetryOnFailure`) and keep the HTTP
+  client's timeout in mind.
 - Locally, Development startup applies pending migrations and seeds the sample
   assets when the table is empty (copied from Week 46). In production,
   migrations are a deliberate deploy step (SQL script or migration bundle),
-  not something the app does on startup, and sample data is not seeded unless
-  we decide to. Offices are seeded by the migration.
+  not something the app does on startup. Sample data is inserted at startup
+  only when `Database:SeedSampleData` is true and the table is empty (true in
+  Development; set once in Azure, then removed). Offices are seeded by the
+  migration.
 - Read-only queries use `AsNoTracking()`. Filter, sort and page in SQL; never
   load the table and filter in memory.
 - IDs are database identity columns. Never assign or reuse them in code.
@@ -365,8 +406,9 @@ nobody asked for (extra frameworks, abstractions, configuration, features).
 Not part of this API (they live in the Week 46 client): currency conversion
 and exchange rates, EUR totals, report layout, TXT/CSV/JSON export, any UI.
 
-Planned but **not in scope yet**, do not build until asked: roles and users
-(Level 5), Swagger UI / Scalar, CORS (the client is not a browser), a frontend,
+Planned but **not in scope yet**, do not build until asked: users, roles,
+ASP.NET Core Identity or JWT (next project), Swagger UI / Scalar, CORS (the
+client is not a browser), a frontend,
 switching the Week 46 console app over to call this API (that work belongs in
 the `WeeklyMiniProjects` repo).
 
