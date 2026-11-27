@@ -4,4 +4,8 @@
     <Project Path="src/AssetTracker.Core/AssetTracker.Core.csproj" />
     <Project Path="src/AssetTracker.Infrastructure/AssetTracker.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AssetTracker.Api.Tests/AssetTracker.Api.Tests.csproj" />
+    <Project Path="tests/AssetTracker.Core.Tests/AssetTracker.Core.Tests.csproj" />
+  </Folder>
 </Solution>
